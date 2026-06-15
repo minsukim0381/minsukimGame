@@ -130,44 +130,7 @@ body {
     -webkit-text-fill-color: transparent;
 }
 
-.app-header .subtitle {
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-    font-weight: 300;
-}
 
-/* Firebase Status Badge */
-.db-status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 10px;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    transition: all var(--transition-smooth);
-}
-
-.db-status-badge.offline {
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.20);
-    color: var(--accent-red);
-    box-shadow: 0 0 10px rgba(239, 68, 68, 0.05);
-}
-
-.db-status-badge.online {
-    background: rgba(52, 211, 153, 0.08);
-    border: 1px solid rgba(52, 211, 153, 0.20);
-    color: var(--accent-green);
-    box-shadow: 0 0 10px rgba(52, 211, 153, 0.1);
-}
-
-.db-status-badge.testing {
-    background: rgba(251, 146, 60, 0.08);
-    border: 1px solid rgba(251, 146, 60, 0.20);
-    color: var(--accent-yellow);
-}
 
 /* Main Grid Layout (Responsive) */
 .layout-grid {
@@ -483,6 +446,56 @@ body {
     font-size: 0.6rem;
     color: var(--text-muted);
     margin-top: 2px;
+}
+
+/* Custom Settings Panel */
+.custom-settings {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 4px 0 8px 0;
+    transition: all var(--transition-smooth);
+    animation: scaleIn var(--transition-fast) forwards;
+}
+
+.custom-input-row {
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.custom-input-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
+}
+
+.custom-input-col label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.custom-input-col input {
+    width: 100% !important;
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 6px !important;
+    padding: 8px 4px !important;
+    color: white !important;
+    font-size: 0.85rem !important;
+    text-align: center !important;
+    outline: none !important;
+    transition: all var(--transition-fast) !important;
+}
+
+.custom-input-col input:focus {
+    border-color: var(--accent) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.15) !important;
 }
 
 .nickname-form input {

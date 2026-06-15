@@ -371,8 +371,12 @@ function gameOver(isWin, clickedMineR = null, clickedMineC = null) {
         }
     }
 
-    // 2) Firestore DB에 기록 저장 (난이도 필드 전달)
-    saveRecord(playerName, isWin, timer, correctFlagsCount, currentGameDifficulty);
+    // 2) Firestore DB에 기록 저장 (난이도 필드 및 커스텀 파라미터 전달)
+    if (currentGameDifficulty === "custom") {
+        saveRecord(playerName, isWin, timer, correctFlagsCount, currentGameDifficulty, rows, cols, minesCount);
+    } else {
+        saveRecord(playerName, isWin, timer, correctFlagsCount, currentGameDifficulty);
+    }
 
     // 3) 결과 모달 출력
     showResultModal(isWin);
@@ -413,11 +417,13 @@ function resetGame() {
     timer = 0;
     updateTimerUI();
     
-    // 설정된 게임 난이도로 격자 규격 재조정
-    const config = DIFFICULTY_CONFIG[currentGameDifficulty];
-    rows = config.rows;
-    cols = config.cols;
-    minesCount = config.mines;
+    // 설정된 게임 난이도로 격자 규격 재조정 (커스텀 제외)
+    if (currentGameDifficulty !== "custom") {
+        const config = DIFFICULTY_CONFIG[currentGameDifficulty];
+        rows = config.rows;
+        cols = config.cols;
+        minesCount = config.mines;
+    }
 
     initBoard();
     renderField();
@@ -425,6 +431,17 @@ function resetGame() {
     // 매 판마다 닉네임 입력 칸과 시작 버튼이 나오도록 설정
     gameState = "idle";
     boardOverlayEl.classList.add("active");
+
+    // 라디오 선택 상태 및 커스텀 패널 노출 동기화
+    const activeRadio = nicknameForm.querySelector(`input[name="difficulty"][value="${currentGameDifficulty}"]`);
+    if (activeRadio) activeRadio.checked = true;
+    
+    const customSettingsEl = document.getElementById("custom-settings");
+    if (currentGameDifficulty === "custom") {
+        customSettingsEl.classList.remove("hidden");
+    } else {
+        customSettingsEl.classList.add("hidden");
+    }
     
     // 기존에 플레이어가 입력한 닉네임이 있다면 인풋 창에 미리 채워줍니다.
     if (playerName) {
@@ -522,9 +539,14 @@ function filterAndRenderLeaderboard() {
             ? `${record.clearTime}초` 
             : `🚩 ${record.correctFlags}개`;
 
+        let nameContent = escapeHTML(record.name);
+        if (record.difficulty === "custom" && record.customRows) {
+            nameContent += ` <span style="font-size: 0.65rem; color: var(--text-muted); margin-left: 4px; border: 1px solid rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 4px;">${record.customRows}x${record.customCols} (🚩${record.customMines})</span>`;
+        }
+
         rowEl.innerHTML = `
             <div class="col-rank">${rankContent}</div>
-            <div class="col-name">${escapeHTML(record.name)}</div>
+            <div class="col-name" style="display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${nameContent}</div>
             <div class="col-status">${statusBadge}</div>
             <div class="col-score monospace text-cyan">${scoreText}</div>
         `;
@@ -562,10 +584,42 @@ nicknameForm.addEventListener("submit", (e) => {
     setActiveTabUI(selectedDiff);
     
     // 설정에 맞게 가변 격자 크기 및 지뢰 개수 동적 재바인딩
-    const config = DIFFICULTY_CONFIG[currentGameDifficulty];
-    rows = config.rows;
-    cols = config.cols;
-    minesCount = config.mines;
+    if (selectedDiff === "custom") {
+        const customRows = parseInt(document.getElementById("custom-rows").value, 10);
+        const customCols = parseInt(document.getElementById("custom-cols").value, 10);
+        const customMines = parseInt(document.getElementById("custom-mines").value, 10);
+        
+        // 입력값 유효성 검증
+        if (isNaN(customRows) || customRows < 5 || customRows > 30) {
+            alert("세로 칸수는 5칸에서 30칸 사이로 입력해 주세요.");
+            return;
+        }
+        if (isNaN(customCols) || customCols < 5 || customCols > 30) {
+            alert("가로 칸수는 5칸에서 30칸 사이로 입력해 주세요.");
+            return;
+        }
+        if (isNaN(customMines) || customMines < 1 || customMines >= (customRows * customCols)) {
+            alert(`지뢰 개수는 1개 이상, 최대 ${(customRows * customCols) - 1}개(가로 x 세로 - 1) 사이로 입력해 주세요.`);
+            return;
+        }
+
+        // 지뢰 밀도 경고 (전체 칸의 40% 이상이 지뢰일 때)
+        const density = customMines / (customRows * customCols);
+        if (density >= 0.4) {
+            if (!confirm("지뢰가 너무 많습니다. 그래도 시작하시겠습니까?")) {
+                return; // 취소 클릭 시 시작 중단
+            }
+        }
+        
+        rows = customRows;
+        cols = customCols;
+        minesCount = customMines;
+    } else {
+        const config = DIFFICULTY_CONFIG[currentGameDifficulty];
+        rows = config.rows;
+        cols = config.cols;
+        minesCount = config.mines;
+    }
     
     // 보드판 전면 재구성
     initBoard();
@@ -577,6 +631,19 @@ nicknameForm.addEventListener("submit", (e) => {
     
     // 게임을 시작 대기("ready") 상태로 만듬 (첫 좌클릭 대기)
     gameState = "ready";
+});
+
+// 난이도 라디오 토글 시 커스텀 설정창 제어 이벤트 바인딩
+const diffRadios = nicknameForm.querySelectorAll('input[name="difficulty"]');
+diffRadios.forEach((radio) => {
+    radio.addEventListener("change", (e) => {
+        const customSettingsEl = document.getElementById("custom-settings");
+        if (e.target.value === "custom") {
+            customSettingsEl.classList.remove("hidden");
+        } else {
+            customSettingsEl.classList.add("hidden");
+        }
+    });
 });
 
 changeNameBtn.addEventListener("change", () => {
@@ -722,25 +789,8 @@ setInterval(() => {
 // 8. 앱 구동 개시 및 Firebase 연결 테스트 (Self-Diagnostics)
 // =================================================================
 
-const dbBadgeEl = document.getElementById("db-status-badge");
-
 async function runFirebaseDiagnostic() {
-    if (dbBadgeEl) {
-        dbBadgeEl.className = "db-status-badge testing";
-        dbBadgeEl.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Firebase 연결 테스트 중...`;
-    }
-    
-    const isOnline = await checkFirebaseConnectivity();
-    
-    if (dbBadgeEl) {
-        if (isOnline) {
-            dbBadgeEl.className = "db-status-badge online";
-            dbBadgeEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> Firebase 연동 완료`;
-        } else {
-            dbBadgeEl.className = "db-status-badge offline";
-            dbBadgeEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Firebase 미연동 (로컬 데모 모드)`;
-        }
-    }
+    await checkFirebaseConnectivity();
 }
 
 // 4) 리더보드 탭 클릭 필터 전환 이벤트 등록

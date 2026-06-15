@@ -116,15 +116,21 @@ const saveLocalSettings = (settings) => {
 /**
  * 1. 게임 전적 데이터(기록) 추가
  */
-export async function saveRecord(name, cleared, clearTime, correctFlags, difficulty) {
+export async function saveRecord(name, cleared, clearTime, correctFlags, difficulty, customRows = null, customCols = null, customMines = null) {
     const recordData = {
         name: name,
         cleared: cleared,
         clearTime: clearTime, // 초 단위
         correctFlags: correctFlags, // 지뢰 위치에 정확히 꽂은 깃발 개수
-        difficulty: difficulty || "easy", // 난이도 (easy, medium, hard)
+        difficulty: difficulty || "easy", // 난이도 (easy, medium, hard, custom)
         timestamp: isFirebaseActive ? serverTimestamp() : new Date().toISOString()
     };
+
+    if (difficulty === "custom") {
+        recordData.customRows = customRows;
+        recordData.customCols = customCols;
+        recordData.customMines = customMines;
+    }
 
     if (isFirebaseActive) {
         try {

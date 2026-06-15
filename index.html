@@ -21,10 +21,6 @@
         <!-- 상단 헤더 -->
         <header class="app-header">
             <h1 class="glow-text"><i class="fa-solid fa-bomb bomb-icon"></i> MINESWEEPER <span class="accent-text">LIVE</span></h1>
-            <p class="subtitle">실시간 Firestore 랭킹 시스템이 탑재된 프리미엄 지뢰찾기</p>
-            <div id="db-status-badge" class="db-status-badge offline">
-                <i class="fa-solid fa-triangle-exclamation"></i> Firebase 연결 확인 중...
-            </div>
         </header>
 
         <div class="layout-grid">
@@ -87,6 +83,31 @@
                                                 <span class="diff-desc">20x20 (지뢰 80)</span>
                                             </span>
                                         </label>
+                                        <label class="diff-option">
+                                            <input type="radio" name="difficulty" value="custom" id="diff-custom-radio">
+                                            <span class="diff-card">
+                                                <span class="diff-title">커스텀</span>
+                                                <span class="diff-desc">사용자 설정</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- 커스텀 난이도 수치 입력란 -->
+                                <div id="custom-settings" class="custom-settings hidden">
+                                    <div class="custom-input-row">
+                                        <div class="custom-input-col">
+                                            <label for="custom-rows">세로 칸수</label>
+                                            <input type="number" id="custom-rows" min="5" max="30" value="10">
+                                        </div>
+                                        <div class="custom-input-col">
+                                            <label for="custom-cols">가로 칸수</label>
+                                            <input type="number" id="custom-cols" min="5" max="30" value="10">
+                                        </div>
+                                        <div class="custom-input-col">
+                                            <label for="custom-mines">지뢰 수</label>
+                                            <input type="number" id="custom-mines" min="1" max="899" value="15">
+                                        </div>
                                     </div>
                                 </div>
 
@@ -118,6 +139,7 @@
                     <button class="tab-btn active" data-difficulty="easy" id="tab-easy">초급</button>
                     <button class="tab-btn" data-difficulty="medium" id="tab-medium">중급</button>
                     <button class="tab-btn" data-difficulty="hard" id="tab-hard">고급</button>
+                    <button class="tab-btn" data-difficulty="custom" id="tab-custom">커스텀</button>
                 </div>
                 
                 <div class="leaderboard-legend">
