@@ -711,8 +711,12 @@ devCloseBtn.addEventListener("click", () => {
 // 1) 즉시 리셋 실행
 devInstantResetBtn.addEventListener("click", async () => {
     if (confirm("정말로 현재 리더보드에 보이는 모든 실시간 기록들을 즉시 초기화하시겠습니까?\n(Firestore 상에서 물리적 삭제 및 리셋 시간 갱신이 수행됩니다)")) {
-        await triggerInstantReset(activeLeaderboardDocIds, leaderboardSettings.resetPeriod);
-        alert("리더보드가 즉시 초기화되었습니다.");
+        try {
+            await triggerInstantReset(activeLeaderboardDocIds, leaderboardSettings.resetPeriod);
+            alert("리더보드가 즉시 초기화되었습니다.");
+        } catch (e) {
+            alert("리셋 중 오류가 발생했습니다: " + (e.message || e));
+        }
     }
 });
 

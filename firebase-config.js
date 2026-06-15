@@ -217,8 +217,8 @@ export function listenToSettings(callback) {
                 const periodMs = 60 * 60 * 1000; // 60분
                 const defaultSettings = {
                     resetPeriod: 60,
-                    lastManualReset: serverTimestamp(),
-                    lastSystemReset: serverTimestamp(),
+                    lastManualReset: Timestamp.fromMillis(now),
+                    lastSystemReset: Timestamp.fromMillis(now),
                     nextResetTimestamp: Timestamp.fromMillis(now + periodMs)
                 };
                 await setDoc(settingsRef, defaultSettings);
@@ -280,14 +280,14 @@ export async function updateResetPeriod(newPeriodMinutes) {
         const now = Date.now();
         const nextReset = now + newPeriodMinutes * 60 * 1000;
         try {
-            await updateDoc(settingsRef, {
+            await setDoc(settingsRef, {
                 resetPeriod: newPeriodMinutes,
                 lastSystemReset: serverTimestamp(),
                 nextResetTimestamp: Timestamp.fromMillis(nextReset)
-            });
+            }, { merge: true });
             console.log(`리셋 주기가 ${newPeriodMinutes}분으로 업데이트 되었습니다.`);
         } catch (error) {
-            console.error("리셋 주기 설정 변경 에러:", error);
+            console.error("리셋 주기 설정 변경 에러:", error.code, error.message);
         }
     } else {
         const settings = getLocalSettings();
@@ -303,34 +303,47 @@ export async function updateResetPeriod(newPeriodMinutes) {
  */
 export async function triggerInstantReset(visibleDocIds, resetPeriod = 60) {
     if (db) {
-        const batch = writeBatch(db);
-        
-        // 1) 화면에 보이는 활성 데이터들을 Firestore 컬렉션에서 일괄 삭제 (Batch Delete)
-        visibleDocIds.forEach((id) => {
-            const docRef = doc(db, "leaderboard", id);
-            batch.delete(docRef);
-        });
-
-        // 2) 설정 문서의 lastManualReset 및 lastSystemReset을 현재 시간으로 세팅
+        // Firestore 보안 규칙에서 delete가 허용된 경우에만 삭제 시도
+        // 삭제 실패해도 lastSystemReset 갱신으로 클라이언트에서 자동 필터링
         const settingsRef = doc(db, "config", "settings");
         const now = Date.now();
         const nextReset = now + resetPeriod * 60 * 1000;
-        batch.update(settingsRef, {
-            lastManualReset: serverTimestamp(),
-            lastSystemReset: serverTimestamp(),
-            nextResetTimestamp: Timestamp.fromMillis(nextReset)
-        });
 
         try {
-            await batch.commit();
-            console.log("즉시 리셋을 실행하여 활성 문서 삭제 및 리셋 시간 갱신이 완료되었습니다.");
+            // 1단계: 타임스탬프 업데이트 (이것만으로도 클라이언트 필터링이 동작함)
+            await setDoc(settingsRef, {
+                lastManualReset: Timestamp.fromMillis(now),
+                lastSystemReset: Timestamp.fromMillis(now),
+                nextResetTimestamp: Timestamp.fromMillis(nextReset),
+                resetPeriod: resetPeriod
+            }, { merge: true });
+            console.log("리셋 시간 갱신 완료. 클라이언트에서 오래된 기록이 필터링됩니다.");
+
+            // 2단계: 레코드 삭제 시도 (권한이 있을 경우에만 성공, 없어도 타임스탬프로 숨겨짐)
+            if (visibleDocIds.length > 0) {
+                const batch = writeBatch(db);
+                visibleDocIds.forEach((id) => {
+                    const docRef = doc(db, "leaderboard", id);
+                    batch.delete(docRef);
+                });
+                try {
+                    await batch.commit();
+                    console.log(`${visibleDocIds.length}개 레코드 물리적 삭제 완료.`);
+                } catch (deleteError) {
+                    // 삭제 권한이 없어도 타임스탬프로 이미 숨겨졌으므로 무시
+                    console.warn("레코드 삭제 불가 (권한 없음 - 타임스탬프 필터링으로 대체):", deleteError.code);
+                }
+            }
         } catch (error) {
-            console.error("즉시 리셋 실행 에러:", error);
+            console.error("즉시 리셋 실행 에러:", error.code, error.message);
+            throw error;
         }
     } else {
         // 로컬 데모 모드: 로컬 스토리지의 모든 레코드 비우기 및 settings.lastManualReset 갱신
         const settings = getLocalSettings();
-        settings.lastManualReset = new Date().toISOString();
+        const now = new Date().toISOString();
+        settings.lastManualReset = now;
+        settings.lastSystemReset = now;
         saveLocalSettings(settings);
         
         // 화면에 노출되었던 로컬 데이터 삭제
@@ -356,9 +369,16 @@ export async function triggerAutoReset() {
             if (!sfDoc.exists()) return;
             
             const data = sfDoc.data();
-            let nextResetMs = data.nextResetTimestamp instanceof Timestamp 
-                ? data.nextResetTimestamp.toMillis() 
-                : data.nextResetTimestamp.seconds * 1000;
+            let nextResetMs = 0;
+            if (data.nextResetTimestamp) {
+                if (typeof data.nextResetTimestamp.toMillis === "function") {
+                    nextResetMs = data.nextResetTimestamp.toMillis();
+                } else if (data.nextResetTimestamp.seconds) {
+                    nextResetMs = data.nextResetTimestamp.seconds * 1000;
+                } else {
+                    nextResetMs = new Date(data.nextResetTimestamp).getTime() || 0;
+                }
+            }
             
             const now = Date.now();
             // 만약 이미 다른 사용자가 리셋을 완료해서 nextResetTimestamp가 미래 시점으로 갱신되었으면 스킵
