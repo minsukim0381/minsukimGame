@@ -225,31 +225,39 @@ function handleCellLeftClick(r, c) {
 }
 
 /**
- * 재귀적 Flood Fill 타일 오픈 (주변 지뢰가 0일 경우 사방으로 자동 확장)
+ * BFS(큐) 기반 Flood Fill 타일 오픈 (주변 지뢰가 0일 경우 사방으로 자동 확장)
+ * 재귀 대신 반복문 사용 → 대형 보드에서 스택 오버플로우 방지
  */
-function openCell(r, c) {
-    const cell = board[r][c];
-    if (cell.isOpened || cell.isFlagged) return;
+function openCell(startR, startC) {
+    const queue = [[startR, startC]];
 
-    cell.isOpened = true;
-    const cellEl = document.querySelector(`.cell[data-row="${r}"][data-col="${c}"]`);
-    if (cellEl) {
-        cellEl.classList.add("opened");
-        if (cell.neighborMines > 0) {
-            cellEl.textContent = cell.neighborMines;
-            cellEl.classList.add(`num-${cell.neighborMines}`);
+    while (queue.length > 0) {
+        const [r, c] = queue.shift();
+        const cell = board[r][c];
+
+        if (cell.isOpened || cell.isFlagged) continue;
+
+        cell.isOpened = true;
+        const cellEl = document.getElementById(`cell-${r}-${c}`);
+        if (cellEl) {
+            cellEl.classList.add("opened");
+            if (cell.neighborMines > 0) {
+                cellEl.textContent = cell.neighborMines;
+                cellEl.classList.add(`num-${cell.neighborMines}`);
+            }
         }
-    }
 
-    // 인접 지뢰가 0인 경우 연쇄 오픈
-    if (cell.neighborMines === 0) {
-        for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-                const nr = r + dr;
-                const nc = c + dc;
-                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
-                    if (!board[nr][nc].isMine && !board[nr][nc].isOpened) {
-                        openCell(nr, nc);
+        // 인접 지뢰가 0인 경우 이웃 칸을 큐에 추가
+        if (cell.neighborMines === 0) {
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                        if (!board[nr][nc].isMine && !board[nr][nc].isOpened && !board[nr][nc].isFlagged) {
+                            queue.push([nr, nc]);
+                        }
                     }
                 }
             }
@@ -275,7 +283,7 @@ function handleCellRightClick(r, c) {
         flaggedCount--;
     }
 
-    const cellEl = document.querySelector(`.cell[data-row="${r}"][data-col="${c}"]`);
+    const cellEl = document.getElementById(`cell-${r}-${c}`);
     if (cellEl) {
         if (cell.isFlagged) {
             cellEl.classList.add("flagged");
@@ -350,7 +358,7 @@ function gameOver(isWin, clickedMineR = null, clickedMineC = null) {
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             const cell = board[r][c];
-            const cellEl = document.querySelector(`.cell[data-row="${r}"][data-col="${c}"]`);
+            const cellEl = document.getElementById(`cell-${r}-${c}`);
 
             if (cell.isMine) {
                 if (cell.isFlagged) {
@@ -358,18 +366,15 @@ function gameOver(isWin, clickedMineR = null, clickedMineC = null) {
                 } else if (!isWin) {
                     // 패배 시 터지지 않은 지뢰 공개
                     if (r === clickedMineR && c === clickedMineC) {
-                        cellEl.classList.add("mine");
-                        cellEl.innerHTML = `<i class="fa-solid fa-burst"></i>`;
+                        if (cellEl) { cellEl.classList.add("mine"); cellEl.innerHTML = `<i class="fa-solid fa-burst"></i>`; }
                     } else {
-                        cellEl.classList.add("opened");
-                        cellEl.innerHTML = `<i class="fa-solid fa-bomb text-cyan"></i>`;
+                        if (cellEl) { cellEl.classList.add("opened"); cellEl.innerHTML = `<i class="fa-solid fa-bomb text-cyan"></i>`; }
                     }
                 }
             } else {
                 // 지뢰가 없는데 잘못 꽂힌 깃발 공개 (패배 시)
                 if (cell.isFlagged && !isWin) {
-                    cellEl.classList.add("mine-wrong");
-                    cellEl.innerHTML = `<i class="fa-solid fa-ban"></i>`;
+                    if (cellEl) { cellEl.classList.add("mine-wrong"); cellEl.innerHTML = `<i class="fa-solid fa-ban"></i>`; }
                 }
             }
         }
@@ -651,9 +656,7 @@ diffRadios.forEach((radio) => {
     });
 });
 
-changeNameBtn.addEventListener("change", () => {
-    // 닉네임 변경 버튼 클릭 시 입력창으로 전환
-});
+// changeNameBtn은 click 이벤트만 사용 (아래에서 처리)
 
 changeNameBtn.addEventListener("click", () => {
     playerName = "";
@@ -678,8 +681,9 @@ const DEVMODE_KEYWORD = "devmode";
 
 // 키보드 입력을 누적 감지하여 개발자 모드 오픈
 document.addEventListener("keydown", (e) => {
-    // input 포커스 상태일 때는 오작동 방지
-    if (document.activeElement.tagName === "INPUT") return;
+    // input/textarea/select 포커스 상태일 때는 오작동 방지
+    const tag = document.activeElement.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
     // 문자 키 입력만 버퍼에 추가
     if (e.key.length === 1) {
@@ -790,10 +794,9 @@ listenToLeaderboard((records) => {
     filterAndRenderLeaderboard();
 });
 
-// 3) 1초마다 남은 시간 갱신 및 데이터 만료 감지
+// 3) 1초마다 남은 시간 카운트다운 갱신 (리더보드 재렌더는 onSnapshot 이벤트에서만 수행)
 setInterval(() => {
     updateResetCountdown();
-    filterAndRenderLeaderboard();
 }, 1000);
 
 // =================================================================
