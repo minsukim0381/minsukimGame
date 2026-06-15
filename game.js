@@ -5,7 +5,9 @@ import {
     updateResetPeriod, 
     triggerInstantReset,
     getFirebaseStatus,
-    checkFirebaseConnectivity
+    checkFirebaseConnectivity,
+    triggerAutoReset,
+    triggerLocalAutoReset
 } from "./firebase-config.js";
 
 // =================================================================
@@ -33,10 +35,12 @@ let flaggedCount = 0;
 let correctFlagsCount = 0;
 let firstClick = true;
 
-// Firestore 실시간 리셋 설정을 동기화하여 담는 객체
+// Firestore 실시간 리셋 설정을 동기화하여 담는 객체 (자동 주기 리셋 스키마 포함)
 let leaderboardSettings = {
-    resetPeriod: 60, // 분 단위 (기본 1시간)
-    lastManualReset: 0 // 타임스탬프 (ms)
+    resetPeriod: 60,
+    lastManualReset: 0,
+    lastSystemReset: 0,
+    nextResetTimestamp: 0
 };
 
 // 현재 리더보드 화면에 노출 중인 문서 ID들 (개발자 모드 즉시 리셋 시 사용)
@@ -373,7 +377,7 @@ function gameOver(isWin, clickedMineR = null, clickedMineC = null) {
 
     // 2) Firestore DB에 기록 저장 (난이도 필드 및 커스텀 파라미터 전달)
     if (currentGameDifficulty === "custom") {
-        saveRecord(playerName, isWin, timer, correctFlagsCount, currentGameDifficulty, rows, cols, minesCount);
+        saveRecord(playerName, isWin, timer, correctFlagsCount, currentGameDifficulty, rows, minesCount, cols);
     } else {
         saveRecord(playerName, isWin, timer, correctFlagsCount, currentGameDifficulty);
     }
@@ -461,23 +465,24 @@ let rawRecords = [];
  */
 function filterAndRenderLeaderboard() {
     const now = Date.now();
-    const expiryMs = leaderboardSettings.resetPeriod * 60 * 1000;
-    const lastReset = leaderboardSettings.lastManualReset;
+    const lastSystemReset = leaderboardSettings.lastSystemReset || 0;
+    const lastManualReset = leaderboardSettings.lastManualReset || 0;
 
     // 1) 리셋 주기 및 수동 리셋 조건 및 난이도에 부합하는 데이터만 필터링
     const activeRecords = rawRecords.filter((record) => {
         const ts = record.timestamp || now;
+        const isPending = record.isPending;
         
-        // 규칙 1: 리셋 주기 이내에 생성된 데이터인지 확인
-        const isWithinPeriod = (now - ts) <= expiryMs;
+        // 규칙 1: 시스템 공통 자동 리셋 시간보다 이후 기록인지 확인 (모두에게 동시 리셋 보장)
+        const isAfterSystemReset = isPending || (ts > lastSystemReset);
         
-        // 규칙 2: 마지막 수동 리셋 타임스탬프 이후인지 확인
-        const isAfterManualReset = ts > lastReset;
+        // 규칙 2: 마지막 수동 즉시 리셋 시간보다 이후 기록인지 확인
+        const isAfterManualReset = isPending || (ts > lastManualReset);
 
         // 규칙 3: 현재 조회 중인 난이도 탭과 일치하는지 확인 (이전 누락 데이터는 'easy'로 매핑)
         const isSameDifficulty = (record.difficulty || "easy") === currentViewDifficulty;
 
-        return isWithinPeriod && isAfterManualReset && isSameDifficulty;
+        return isAfterSystemReset && isAfterManualReset && isSameDifficulty;
     });
 
     // 2) 랭킹 정렬 로직 적용
@@ -706,7 +711,7 @@ devCloseBtn.addEventListener("click", () => {
 // 1) 즉시 리셋 실행
 devInstantResetBtn.addEventListener("click", async () => {
     if (confirm("정말로 현재 리더보드에 보이는 모든 실시간 기록들을 즉시 초기화하시겠습니까?\n(Firestore 상에서 물리적 삭제 및 리셋 시간 갱신이 수행됩니다)")) {
-        await triggerInstantReset(activeLeaderboardDocIds);
+        await triggerInstantReset(activeLeaderboardDocIds, leaderboardSettings.resetPeriod);
         alert("리더보드가 즉시 초기화되었습니다.");
     }
 });
@@ -731,20 +736,22 @@ devPeriodApplyBtn.addEventListener("click", async () => {
  * 리더보드 리셋 주기 카운트다운 타이머 갱신
  */
 function updateResetCountdown() {
+    if (!leaderboardSettings || !leaderboardSettings.nextResetTimestamp) {
+        resetTimerTextEl.textContent = "초기화 시간 불러오는 중...";
+        return;
+    }
     const now = Date.now();
-    const periodMs = leaderboardSettings.resetPeriod * 60 * 1000;
-    const lastReset = leaderboardSettings.lastManualReset || 0;
-
-    // lastReset 시점부터 periodMs 간격으로 미래의 다음 리셋 예정 시간 계산
-    const elapsedSinceLastReset = now - lastReset;
-    const cycles = Math.floor(elapsedSinceLastReset / periodMs);
-    const nextResetTimestamp = lastReset + (cycles + 1) * periodMs;
-
-    const timeLeftMs = nextResetTimestamp - now;
+    const nextReset = leaderboardSettings.nextResetTimestamp;
+    const timeLeftMs = nextReset - now;
 
     if (timeLeftMs <= 0) {
-        // 리셋 타임이 도달하면 리더보드 리렌더링하여 데이터 갱신
-        filterAndRenderLeaderboard();
+        // 리셋 타임이 도달하면 데이터베이스 연동 자동 리셋 실행 (로컬 모드는 자체 갱신)
+        const firebaseActive = getFirebaseStatus();
+        if (firebaseActive) {
+            triggerAutoReset();
+        } else {
+            triggerLocalAutoReset();
+        }
         resetTimerTextEl.textContent = "초기화 진행 중...";
         return;
     }

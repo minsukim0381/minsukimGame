@@ -31,7 +31,8 @@ import {
     writeBatch, 
     serverTimestamp,
     Timestamp,
-    deleteDoc
+    deleteDoc,
+    runTransaction
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 let db = null;
@@ -116,14 +117,14 @@ const saveLocalSettings = (settings) => {
 /**
  * 1. 게임 전적 데이터(기록) 추가
  */
-export async function saveRecord(name, cleared, clearTime, correctFlags, difficulty, customRows = null, customCols = null, customMines = null) {
+export async function saveRecord(name, cleared, clearTime, correctFlags, difficulty, customRows = null, customMines = null, customCols = null) {
     const recordData = {
         name: name,
         cleared: cleared,
         clearTime: clearTime, // 초 단위
         correctFlags: correctFlags, // 지뢰 위치에 정확히 꽂은 깃발 개수
         difficulty: difficulty || "easy", // 난이도 (easy, medium, hard, custom)
-        timestamp: isFirebaseActive ? serverTimestamp() : new Date().toISOString()
+        timestamp: db ? serverTimestamp() : new Date().toISOString()
     };
 
     if (difficulty === "custom") {
@@ -132,7 +133,7 @@ export async function saveRecord(name, cleared, clearTime, correctFlags, difficu
         recordData.customMines = customMines;
     }
 
-    if (isFirebaseActive) {
+    if (db) {
         try {
             await addDoc(collection(db, "leaderboard"), recordData);
             console.log("Firestore 기록 저장 성공:", recordData);
@@ -142,24 +143,21 @@ export async function saveRecord(name, cleared, clearTime, correctFlags, difficu
     } else {
         // 로컬 스토리지 대체 작동
         const records = getLocalRecords();
-        // date string parsing helper
         records.push({
             id: "local_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
             ...recordData
         });
         saveLocalRecords(records);
         console.log("로컬 스토리지에 기록 저장 완료 (데모 모드).");
-        // 로컬 모드에서는 상태 변경 이벤트를 수동으로 발생시켜 UI 갱신을 도움
         window.dispatchEvent(new CustomEvent("local-db-changed"));
     }
 }
 
 /**
  * 2. 리더보드 데이터 실시간 리스너 (onSnapshot)
- * 리포팅 형태는 Array.
  */
 export function listenToLeaderboard(callback) {
-    if (isFirebaseActive) {
+    if (db) {
         const q = query(
             collection(db, "leaderboard"),
             orderBy("timestamp", "desc"), // 전체 최근 데이터를 받아와서 클라이언트에서 필터링 & 정렬
@@ -169,15 +167,21 @@ export function listenToLeaderboard(callback) {
             const records = [];
             snapshot.forEach((doc) => {
                 const data = doc.data();
-                // Firestore Timestamp 변환 처리
                 let timestampMs = Date.now();
                 if (data.timestamp) {
-                    timestampMs = data.timestamp instanceof Timestamp ? data.timestamp.toMillis() : data.timestamp.seconds * 1000;
+                    if (typeof data.timestamp.toMillis === "function") {
+                        timestampMs = data.timestamp.toMillis();
+                    } else if (data.timestamp.seconds) {
+                        timestampMs = data.timestamp.seconds * 1000;
+                    } else {
+                        timestampMs = new Date(data.timestamp).getTime() || Date.now();
+                    }
                 }
                 records.push({
                     id: doc.id,
                     ...data,
-                    timestamp: timestampMs
+                    timestamp: timestampMs,
+                    isPending: !data.timestamp || (doc.metadata && doc.metadata.hasPendingWrites)
                 });
             });
             callback(records);
@@ -189,47 +193,55 @@ export function listenToLeaderboard(callback) {
         const triggerUpdate = () => {
             const records = getLocalRecords().map(r => ({
                 ...r,
-                // 로컬의 string date를 ms로 파싱
                 timestamp: new Date(r.timestamp).getTime()
             }));
             callback(records);
         };
-        // 첫 실행
         triggerUpdate();
-        // 커스텀 이벤트 바인딩
         const handler = () => triggerUpdate();
         window.addEventListener("local-db-changed", handler);
-        // 구독 해제 핸들러 반환
         return () => window.removeEventListener("local-db-changed", handler);
     }
 }
 
 /**
- * 3. 리셋 설정값 (주기 및 수동리셋 기준시각) 실시간 동기화
+ * 3. 리셋 설정값 (주기 및 수동리셋 기준시각) 실시간 동기화 (자동 주기 리셋 스키마 포함)
  */
 export function listenToSettings(callback) {
-    if (isFirebaseActive) {
+    if (db) {
         const settingsRef = doc(db, "config", "settings");
         return onSnapshot(settingsRef, async (docSnapshot) => {
             if (!docSnapshot.exists()) {
                 // 설정 문서가 없으면 최초 1회 생성 (기본 리셋 60분)
+                const now = Date.now();
+                const periodMs = 60 * 60 * 1000; // 60분
                 const defaultSettings = {
                     resetPeriod: 60,
-                    lastManualReset: serverTimestamp()
+                    lastManualReset: serverTimestamp(),
+                    lastSystemReset: serverTimestamp(),
+                    nextResetTimestamp: Timestamp.fromMillis(now + periodMs)
                 };
                 await setDoc(settingsRef, defaultSettings);
                 console.log("기본 설정 문서를 생성했습니다.");
             } else {
                 const data = docSnapshot.data();
-                let lastResetMs = 0;
-                if (data.lastManualReset) {
-                    lastResetMs = data.lastManualReset instanceof Timestamp 
-                        ? data.lastManualReset.toMillis() 
-                        : data.lastManualReset.seconds * 1000;
-                }
+                
+                const parseTimestamp = (val) => {
+                    if (!val) return 0;
+                    if (typeof val.toMillis === "function") return val.toMillis();
+                    if (val.seconds) return val.seconds * 1000;
+                    return new Date(val).getTime() || 0;
+                };
+
+                const lastManualResetMs = parseTimestamp(data.lastManualReset);
+                const lastSystemResetMs = parseTimestamp(data.lastSystemReset);
+                const nextResetMs = parseTimestamp(data.nextResetTimestamp) || (Date.now() + 60 * 60 * 1000);
+
                 callback({
                     resetPeriod: data.resetPeriod || 60,
-                    lastManualReset: lastResetMs
+                    lastManualReset: lastManualResetMs,
+                    lastSystemReset: lastSystemResetMs,
+                    nextResetTimestamp: nextResetMs
                 });
             }
         });
@@ -237,9 +249,19 @@ export function listenToSettings(callback) {
         // 로컬 데모 모드
         const triggerUpdate = () => {
             const settings = getLocalSettings();
+            const now = Date.now();
+            const lastManual = new Date(settings.lastManualReset).getTime();
+            const periodMs = settings.resetPeriod * 60 * 1000;
+            const elapsed = now - lastManual;
+            const cycles = Math.floor(elapsed / periodMs);
+            const nextReset = lastManual + (cycles + 1) * periodMs;
+            const lastSystem = lastManual + cycles * periodMs;
+
             callback({
                 resetPeriod: settings.resetPeriod,
-                lastManualReset: new Date(settings.lastManualReset).getTime()
+                lastManualReset: lastManual,
+                lastSystemReset: lastSystem,
+                nextResetTimestamp: nextReset
             });
         };
         triggerUpdate();
@@ -250,14 +272,18 @@ export function listenToSettings(callback) {
 }
 
 /**
- * 4. 개발자 모드: 리셋 주기 설정값 업데이트
+ * 4. 개발자 모드: 리셋 주기 설정값 업데이트 (데이터베이스 연동으로 다음 리셋 타임도 동시 재계산)
  */
 export async function updateResetPeriod(newPeriodMinutes) {
-    if (isFirebaseActive) {
+    if (db) {
         const settingsRef = doc(db, "config", "settings");
+        const now = Date.now();
+        const nextReset = now + newPeriodMinutes * 60 * 1000;
         try {
             await updateDoc(settingsRef, {
-                resetPeriod: newPeriodMinutes
+                resetPeriod: newPeriodMinutes,
+                lastSystemReset: serverTimestamp(),
+                nextResetTimestamp: Timestamp.fromMillis(nextReset)
             });
             console.log(`리셋 주기가 ${newPeriodMinutes}분으로 업데이트 되었습니다.`);
         } catch (error) {
@@ -273,10 +299,10 @@ export async function updateResetPeriod(newPeriodMinutes) {
 }
 
 /**
- * 5. 개발자 모드: 즉시 리셋 (현재 화면에 노출된 항목 삭제)
+ * 5. 개발자 모드: 즉시 리셋 (현재 화면에 노출된 항목 삭제 및 시간 동시 동기화)
  */
-export async function triggerInstantReset(visibleDocIds) {
-    if (isFirebaseActive) {
+export async function triggerInstantReset(visibleDocIds, resetPeriod = 60) {
+    if (db) {
         const batch = writeBatch(db);
         
         // 1) 화면에 보이는 활성 데이터들을 Firestore 컬렉션에서 일괄 삭제 (Batch Delete)
@@ -285,10 +311,14 @@ export async function triggerInstantReset(visibleDocIds) {
             batch.delete(docRef);
         });
 
-        // 2) 설정 문서의 lastManualReset을 현재 시간으로 동기화하여 그 이전 기록도 모두 소멸되게 함
+        // 2) 설정 문서의 lastManualReset 및 lastSystemReset을 현재 시간으로 세팅
         const settingsRef = doc(db, "config", "settings");
+        const now = Date.now();
+        const nextReset = now + resetPeriod * 60 * 1000;
         batch.update(settingsRef, {
-            lastManualReset: serverTimestamp()
+            lastManualReset: serverTimestamp(),
+            lastSystemReset: serverTimestamp(),
+            nextResetTimestamp: Timestamp.fromMillis(nextReset)
         });
 
         try {
@@ -312,6 +342,61 @@ export async function triggerInstantReset(visibleDocIds) {
         window.dispatchEvent(new CustomEvent("local-db-changed"));
         window.dispatchEvent(new CustomEvent("local-settings-changed"));
     }
+}
+
+/**
+ * 6. 자동 리셋 트리거 (카운트다운 만료 시 트랜잭션을 사용하여 동시 안전 초기화 실행)
+ */
+export async function triggerAutoReset() {
+    if (!db) return;
+    const settingsRef = doc(db, "config", "settings");
+    try {
+        await runTransaction(db, async (transaction) => {
+            const sfDoc = await transaction.get(settingsRef);
+            if (!sfDoc.exists()) return;
+            
+            const data = sfDoc.data();
+            let nextResetMs = data.nextResetTimestamp instanceof Timestamp 
+                ? data.nextResetTimestamp.toMillis() 
+                : data.nextResetTimestamp.seconds * 1000;
+            
+            const now = Date.now();
+            // 만약 이미 다른 사용자가 리셋을 완료해서 nextResetTimestamp가 미래 시점으로 갱신되었으면 스킵
+            if (now < nextResetMs) {
+                return;
+            }
+            
+            const periodMs = (data.resetPeriod || 60) * 60 * 1000;
+            let newNextMs = nextResetMs + periodMs;
+            // 누적 미처리 주기가 있는 경우 현재 시간 이후로 반복 연산
+            while (newNextMs <= now) {
+                newNextMs += periodMs;
+            }
+            
+            transaction.update(settingsRef, {
+                lastSystemReset: Timestamp.fromMillis(nextResetMs),
+                nextResetTimestamp: Timestamp.fromMillis(newNextMs)
+            });
+            console.log(`[Firestore 트랜잭션] 자동 동시 리셋 성공. 다음 리셋: ${new Date(newNextMs).toLocaleString()}`);
+        });
+    } catch (error) {
+        console.error("자동 리셋 트랜잭션 실패:", error);
+    }
+}
+
+/**
+ * 7. 로컬 데모 모드를 위한 자동 리셋 시뮬레이션
+ */
+export function triggerLocalAutoReset() {
+    const settings = getLocalSettings();
+    const now = Date.now();
+    const lastManual = new Date(settings.lastManualReset).getTime();
+    const periodMs = settings.resetPeriod * 60 * 1000;
+    const elapsed = now - lastManual;
+    const cycles = Math.floor(elapsed / periodMs);
+    settings.lastManualReset = new Date(lastManual + (cycles + 1) * periodMs).toISOString();
+    saveLocalSettings(settings);
+    window.dispatchEvent(new CustomEvent("local-settings-changed"));
 }
 
 // Firebase 활성화 상태 반환
