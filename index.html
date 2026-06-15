@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="실시간 리더보드가 탑재된 프리미엄 디자인의 지뢰찾기 게임입니다. 친구들과 함께 기록을 겨루어 보세요.">
+    <title>실시간 리더보드 지뢰찾기 - Minesweeper Live</title>
+    <!-- Google Fonts: Inter & Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Premium Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glass-bg"></div>
+    <div class="glow-dots"></div>
+
+    <main class="app-container">
+        <!-- 상단 헤더 -->
+        <header class="app-header">
+            <h1 class="glow-text"><i class="fa-solid fa-bomb bomb-icon"></i> MINESWEEPER <span class="accent-text">LIVE</span></h1>
+            <p class="subtitle">실시간 Firestore 랭킹 시스템이 탑재된 프리미엄 지뢰찾기</p>
+            <div id="db-status-badge" class="db-status-badge offline">
+                <i class="fa-solid fa-triangle-exclamation"></i> Firebase 연결 확인 중...
+            </div>
+        </header>
+
+        <div class="layout-grid">
+            <!-- 왼쪽: 게임 영역 -->
+            <section class="game-card glass-panel" aria-label="지뢰찾기 보드">
+                <!-- 게임 상태창 -->
+                <div class="game-status-bar">
+                    <div class="status-item" id="timer-box">
+                        <i class="fa-regular fa-clock status-icon text-cyan"></i>
+                        <span class="status-label">경과 시간</span>
+                        <span class="status-value monospace" id="game-timer">000</span>
+                    </div>
+
+                    <button class="status-btn" id="restart-btn" aria-label="게임 재시작">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+
+                    <div class="status-item" id="mines-box">
+                        <i class="fa-solid fa-flag status-icon text-pink"></i>
+                        <span class="status-label">남은 지뢰</span>
+                        <span class="status-value monospace" id="mines-left">15</span>
+                    </div>
+                </div>
+
+                <!-- 지뢰찾기 보드 그리드 wrapper -->
+                <div class="board-wrapper">
+                    <div id="minefield" class="minefield-grid" role="grid" aria-readonly="true">
+                        <!-- JS에서 동적으로 격자 타일 생성 -->
+                    </div>
+                    <!-- 닉네임 입력 전 보드 가리기용 오버레이 -->
+                    <div id="board-overlay" class="board-overlay active">
+                        <div class="overlay-content">
+                            <i class="fa-solid fa-gamepad floating-icon"></i>
+                            <h2>플레이어 닉네임 입력</h2>
+                            <p>리더보드 등록을 위해 닉네임을 입력해 주세요.</p>
+                            <form id="nickname-form" class="nickname-form">
+                                <input type="text" id="nickname-input" placeholder="닉네임 (최대 10자)" minlength="2" maxlength="10" required autocomplete="off">
+                                
+                                <div class="difficulty-select-group">
+                                    <label class="diff-group-label"><i class="fa-solid fa-sliders"></i> 난이도 선택</label>
+                                    <div class="difficulty-options">
+                                        <label class="diff-option">
+                                            <input type="radio" name="difficulty" value="easy" checked>
+                                            <span class="diff-card">
+                                                <span class="diff-title">초급</span>
+                                                <span class="diff-desc">9x9 (지뢰 10)</span>
+                                            </span>
+                                        </label>
+                                        <label class="diff-option">
+                                            <input type="radio" name="difficulty" value="medium">
+                                            <span class="diff-card">
+                                                <span class="diff-title">중급</span>
+                                                <span class="diff-desc">16x16 (지뢰 40)</span>
+                                            </span>
+                                        </label>
+                                        <label class="diff-option">
+                                            <input type="radio" name="difficulty" value="hard">
+                                            <span class="diff-card">
+                                                <span class="diff-title">고급</span>
+                                                <span class="diff-desc">20x20 (지뢰 80)</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <button type="submit" id="start-game-btn" class="glow-btn">게임 시작</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 현재 플레이어 정보 표시 -->
+                <div class="current-player-info hidden" id="player-info-bar">
+                    <span><i class="fa-regular fa-user"></i> 플레이어: <strong id="current-player-name"></strong></span>
+                    <button class="text-btn" id="change-name-btn">닉네임 변경</button>
+                </div>
+            </section>
+
+            <!-- 오른쪽: 실시간 리더보드 영역 -->
+            <section class="leaderboard-card glass-panel" aria-label="실시간 리더보드">
+                <div class="leaderboard-header">
+                    <h2><i class="fa-solid fa-trophy trophy-icon text-yellow"></i> 실시간 랭킹</h2>
+                    <span class="reset-badge" id="reset-badge-info">
+                        <i class="fa-solid fa-arrows-spin-clockwise spin-slow"></i> 
+                        <span id="reset-timer-text">1시간 주기 리셋</span>
+                    </span>
+                </div>
+                
+                <!-- 난이도별 랭킹 탭 필터 -->
+                <div class="leaderboard-tabs" id="leaderboard-tabs">
+                    <button class="tab-btn active" data-difficulty="easy" id="tab-easy">초급</button>
+                    <button class="tab-btn" data-difficulty="medium" id="tab-medium">중급</button>
+                    <button class="tab-btn" data-difficulty="hard" id="tab-hard">고급</button>
+                </div>
+                
+                <div class="leaderboard-legend">
+                    <span class="col-rank">순위</span>
+                    <span class="col-name">이름</span>
+                    <span class="col-status">결과</span>
+                    <span class="col-score">기록 / 깃발</span>
+                </div>
+
+                <div class="leaderboard-body" id="leaderboard-list">
+                    <!-- 실시간 Firestore 랭킹 목록이 들어옴 -->
+                    <div class="loading-state">
+                        <i class="fa-solid fa-circle-notch fa-spin"></i> 랭킹을 불러오는 중...
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- 게임 결과 오버레이 모달 -->
+    <div id="result-modal" class="modal-overlay hidden">
+        <div class="modal-card glass-panel">
+            <div id="modal-banner" class="modal-banner">
+                <!-- 승리/패배에 맞는 아이콘 및 타이틀이 동적으로 주입됨 -->
+            </div>
+            <div class="modal-body">
+                <div class="modal-stats">
+                    <div class="modal-stat-card">
+                        <span class="stat-title">소요 시간</span>
+                        <span class="stat-value text-cyan" id="result-time">0초</span>
+                    </div>
+                    <div class="modal-stat-card">
+                        <span class="stat-title">정확한 깃발</span>
+                        <span class="stat-value text-pink" id="result-flags">0개 / 15개</span>
+                    </div>
+                </div>
+                <p class="modal-message" id="result-message"></p>
+                <div class="modal-actions">
+                    <button class="glow-btn" id="modal-restart-btn">다시 도전하기</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- [숨겨진 개발자 모드 제어판] -->
+    <section id="dev-panel" class="dev-panel-card glass-panel hidden" aria-label="개발자 제어판">
+        <div class="dev-panel-header">
+            <h3><i class="fa-solid fa-terminal dev-icon"></i> 개발자 제어판 (Hidden Dev Mode)</h3>
+            <span class="dev-close-btn" id="dev-close-btn"><i class="fa-solid fa-xmark"></i></span>
+        </div>
+        <div class="dev-panel-body">
+            <!-- 리셋 주기 설정 -->
+            <div class="dev-control-group">
+                <label for="dev-period-input"><i class="fa-solid fa-clock-rotate-left"></i> 리더보드 리셋 주기 (분 단위)</label>
+                <div class="dev-input-wrapper">
+                    <input type="number" id="dev-period-input" min="1" max="1440" placeholder="예: 60 (1시간)">
+                    <button id="dev-period-apply-btn" class="dev-btn border-cyan">적용</button>
+                </div>
+                <small class="dev-help-text">설정값은 Firestore DB에 저장되어 모든 접속 유저에게 실시간 적용됩니다.</small>
+            </div>
+            
+            <!-- 즉시 리셋 -->
+            <div class="dev-control-group">
+                <label><i class="fa-solid fa-trash-can"></i> 리더보드 즉시 초기화</label>
+                <button id="dev-instant-reset-btn" class="dev-btn dev-btn-danger">
+                    <i class="fa-solid fa-triangle-exclamation"></i> 현재 리더보드 데이터 즉시 리셋
+                </button>
+                <small class="dev-help-text text-warning">현재 리더보드에 유효한 Firestore 데이터를 삭제/가림 처리합니다.</small>
+            </div>
+        </div>
+    </section>
+
+    <!-- Core App Module -->
+    <script type="module" src="game.js"></script>
+</body>
+</html>
